@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 from fnmatch import fnmatch
 import paramiko
+from line_ending_handler import convert_line_endings, cleanup_temp_file
 
 def parse_targets(targets):
     """解析目标路径列表，区分本地和远程路径
@@ -53,35 +54,43 @@ def sync_to_remote(source_path, remote_path, target):
         if '#' in server:  # 如果服务器地址中包含端口，需要去掉
             server = server.split('#')[0]
         
-        # 如果提供了密码，使用paramiko
-        if target.get('password'):
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            try:
-                ssh.connect(
-                    server,
-                    port=target['port'],
-                    username=target['server'].split('@')[0],
-                    password=target['password']
-                )
-                
-                sftp = ssh.open_sftp()
-                remote_dir = os.path.dirname(remote_path)
-                ssh.exec_command(f"mkdir -p '{remote_dir}'")
-                sftp.put(source_path, remote_path)
-            finally:
-                ssh.close()
+        # 转换行尾符号
+        temp_path, is_temp = convert_line_endings(source_path, target_os='linux')
         
-        # 如果没有提供密码，使用scp（依赖SSH密钥），不指定端口
-        else:
-            # 创建远程目录
-            remote_dir = os.path.dirname(remote_path)
-            mkdir_cmd = f"ssh {target['server']} \"mkdir -p '{remote_dir}'\""
-            subprocess.run(mkdir_cmd, shell=True, check=True)
+        try:
+            # 如果提供了密码，使用paramiko
+            if target.get('password'):
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                try:
+                    ssh.connect(
+                        server,
+                        port=target['port'],
+                        username=target['server'].split('@')[0],
+                        password=target['password']
+                    )
+                    
+                    sftp = ssh.open_sftp()
+                    remote_dir = os.path.dirname(remote_path)
+                    ssh.exec_command(f"mkdir -p '{remote_dir}'")
+                    sftp.put(temp_path, remote_path)
+                finally:
+                    ssh.close()
             
-            # 执行scp命令
-            scp_cmd = f"scp \"{source_path}\" \"{target['server']}:{remote_path}\""
-            subprocess.run(scp_cmd, shell=True, check=True)
+            # 如果没有提供密码，使用scp（依赖SSH密钥），不指定端口
+            else:
+                # 创建远程目录
+                remote_dir = os.path.dirname(remote_path)
+                mkdir_cmd = f"ssh {target['server']} \"mkdir -p '{remote_dir}'\""
+                subprocess.run(mkdir_cmd, shell=True, check=True)
+                
+                # 执行scp命令
+                scp_cmd = f"scp \"{temp_path}\" \"{target['server']}:{remote_path}\""
+                subprocess.run(scp_cmd, shell=True, check=True)
+                
+        finally:
+            # 清理临时文件
+            cleanup_temp_file(temp_path, is_temp)
             
     except (subprocess.CalledProcessError, paramiko.SSHException) as e:
         print(f"远程同步失败: {e}")
