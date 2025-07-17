@@ -3,7 +3,7 @@ from datetime import datetime
 import os
 import time
 import json
-from sync_utils import sync_to_local, sync_to_remote, should_ignore_file, parse_targets
+from sync_utils import sync_to_local, sync_to_remote, should_ignore_file, parse_targets, delete_from_local, delete_from_remote, delete_from_remote_dir, delete_from_local_dir
 
 class FileHandler(FileSystemEventHandler):
     def __init__(self, config: dict, config_name: str):
@@ -253,3 +253,80 @@ class FileHandler(FileSystemEventHandler):
         
         self._sync_file(file_path)
         self.last_logged_file = file_path
+
+    def on_deleted(self, event):
+        """文件删除事件处理"""
+        file_path = event.src_path
+
+        if should_ignore_file(file_path, self.source_dir, self.ignore_patterns, 
+                         self.only_sync_files, self.log_file):
+            return
+        
+        # 记录日志
+        log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+        if event.is_directory:
+            log_message += f"检测到目录删除: {os.path.relpath(file_path, self.source_dir)}\n"
+        else:
+            log_message += f"检测到文件删除: {os.path.relpath(file_path, self.source_dir)}\n"
+        self._log(log_message)
+        
+        # 删除所有目标中的对应文件或目录
+        self._delete_file(file_path, event.is_directory)
+        
+        # 从同步时间记录中删除该文件
+        if not event.is_directory:
+            self._remove_sync_time(file_path)
+
+    def _delete_file(self, src_path, is_directory=False):
+        """删除所有目标中的对应文件或目录"""
+        relative_path = os.path.relpath(src_path, self.source_dir)
+        
+        # 删除所有目标中的对应文件或目录
+        for target in self.targets:
+            try:
+                if target['remote']:
+                    remote_path = os.path.join(target['path'], relative_path).replace('\\', '/')
+                    if is_directory:
+                        delete_from_remote_dir(remote_path, target)
+                        log_message = f"已删除远程目录: {target['server']}:{remote_path}\n"
+                    else:
+                        delete_from_remote(remote_path, target)
+                        log_message = f"已删除远程文件: {target['server']}:{remote_path}\n"
+                else:
+                    dest_path = os.path.join(target['path'], relative_path)
+                    if is_directory:
+                        delete_from_local_dir(dest_path)
+                        log_message = f"已删除本地目录: {dest_path}\n"
+                    else:
+                        delete_from_local(dest_path)
+                        log_message = f"已删除本地文件: {dest_path}\n"
+                
+                self._log(log_message, write_to_console=False)
+            except Exception as e:
+                error_message = f"删除{'目录' if is_directory else '文件'}失败: {e}\n"
+                self._log(error_message)
+
+    def _remove_sync_time(self, file_path):
+        """从同步时间记录中删除文件"""
+        abs_path = os.path.abspath(file_path)
+        
+        try:
+            all_sync_times = {}
+            if os.path.exists(self.last_sync_file):
+                with open(self.last_sync_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                if content:
+                    all_sync_times = json.loads(content)
+                else:
+                    all_sync_times = {}
+            
+            if self.config_name in all_sync_times and abs_path in all_sync_times[self.config_name]:
+                del all_sync_times[self.config_name][abs_path]
+                
+                os.makedirs(os.path.dirname(self.last_sync_file), exist_ok=True)
+                with open(self.last_sync_file, 'w', encoding='utf-8') as f:
+                    json.dump(all_sync_times, f, indent=2, ensure_ascii=False)
+                
+                self.sync_times = all_sync_times[self.config_name]
+        except Exception as e:
+            print(f"删除同步时间记录失败: {e}")
