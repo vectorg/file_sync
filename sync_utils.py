@@ -49,52 +49,54 @@ def sync_to_local(source_path, destination_path):
 
 def sync_to_remote(source_path, remote_path, target):
     """同步到远程服务器，有密码时使用paramiko，无密码时使用scp"""
+    file_path = None
+    is_temp_file = False
+    
     try:
         server = target['server'].split('@')[1]
         if '#' in server:  # 如果服务器地址中包含端口，需要去掉
             server = server.split('#')[0]
         
         # 转换行尾符号
-        temp_path, is_temp = convert_line_endings(source_path, target_os='linux')
+        file_path, is_temp_file = convert_line_endings(source_path, target_os='linux')
         
-        try:
-            # 如果提供了密码，使用paramiko
-            if target.get('password'):
-                ssh = paramiko.SSHClient()
-                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                try:
-                    ssh.connect(
-                        server,
-                        port=target['port'],
-                        username=target['server'].split('@')[0],
-                        password=target['password']
-                    )
-                    
-                    sftp = ssh.open_sftp()
-                    remote_dir = os.path.dirname(remote_path)
-                    ssh.exec_command(f"mkdir -p '{remote_dir}'")
-                    sftp.put(temp_path, remote_path)
-                finally:
-                    ssh.close()
-            
-            # 如果没有提供密码，使用scp（依赖SSH密钥），不指定端口
-            else:
-                # 创建远程目录
+        # 如果提供了密码，使用paramiko
+        if target.get('password'):
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            try:
+                ssh.connect(
+                    server,
+                    port=target['port'],
+                    username=target['server'].split('@')[0],
+                    password=target['password']
+                )
+                
+                sftp = ssh.open_sftp()
                 remote_dir = os.path.dirname(remote_path)
-                mkdir_cmd = f"ssh {target['server']} \"mkdir -p '{remote_dir}'\""
-                subprocess.run(mkdir_cmd, shell=True, check=True)
-                
-                # 执行scp命令
-                scp_cmd = f"scp \"{temp_path}\" \"{target['server']}:{remote_path}\""
-                subprocess.run(scp_cmd, shell=True, check=True)
-                
-        finally:
-            # 清理临时文件
-            cleanup_temp_file(temp_path, is_temp)
+                ssh.exec_command(f"mkdir -p '{remote_dir}'")
+                sftp.put(file_path, remote_path)
+            finally:
+                ssh.close()
+        
+        # 如果没有提供密码，使用scp（依赖SSH密钥），不指定端口
+        else:
+            # 创建远程目录
+            remote_dir = os.path.dirname(remote_path)
+            mkdir_cmd = f"ssh {target['server']} \"mkdir -p '{remote_dir}'\""
+            subprocess.run(mkdir_cmd, shell=True, check=True)
+            
+            # 执行scp命令
+            scp_cmd = f"scp \"{file_path}\" \"{target['server']}:{remote_path}\""
+            subprocess.run(scp_cmd, shell=True, check=True)
             
     except (subprocess.CalledProcessError, paramiko.SSHException) as e:
         print(f"远程同步失败: {e}")
         raise
+    finally:
+        # 清理临时文件
+        if file_path and is_temp_file:
+            cleanup_temp_file(file_path, is_temp_file)
 
 def should_ignore_file(file_path, source_dir, ignore_patterns, only_sync_files, log_file):
     """检查文件是否应该被忽略
