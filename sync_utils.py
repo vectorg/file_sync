@@ -43,7 +43,7 @@ def sync_to_local(source_path, destination_path):
     os.makedirs(os.path.dirname(destination_path), exist_ok=True)
     try:
         import shutil
-        print(f"复制文件: {source_path} -> {destination_path}")
+        # print(f"复制文件: {source_path} -> {destination_path}")
         shutil.copy2(source_path, destination_path)
     except Exception as e:
         raise
@@ -76,9 +76,9 @@ def sync_to_remote(source_path, remote_path, target):
                 sftp = ssh.open_sftp()
                 remote_dir = os.path.dirname(remote_path)
                 mkdir_cmd = f"mkdir -p '{remote_dir}'"
-                print(f"执行远程命令: {mkdir_cmd}")
+                # print(f"执行远程命令: {mkdir_cmd}")
                 ssh.exec_command(mkdir_cmd)
-                print(f"上传文件: {file_path} -> {target['server']}:{remote_path}")
+                # print(f"上传文件: {file_path} -> {target['server']}:{remote_path}")
                 sftp.put(file_path, remote_path)
             finally:
                 ssh.close()
@@ -88,12 +88,12 @@ def sync_to_remote(source_path, remote_path, target):
             # 创建远程目录
             remote_dir = os.path.dirname(remote_path)
             mkdir_cmd = f"ssh {target['server']} \"mkdir -p '{remote_dir}'\""
-            print(f"执行命令: {mkdir_cmd}")
+            # print(f"执行命令: {mkdir_cmd}")
             subprocess.run(mkdir_cmd, shell=True, check=True)
             
             # 执行scp命令
             scp_cmd = f"scp \"{file_path}\" \"{target['server']}:{remote_path}\""
-            print(f"执行命令: {scp_cmd}")
+            # print(f"执行命令: {scp_cmd}")
             subprocess.run(scp_cmd, shell=True, check=True)
             
     except (subprocess.CalledProcessError, paramiko.SSHException) as e:
