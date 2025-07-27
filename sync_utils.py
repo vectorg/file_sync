@@ -4,7 +4,23 @@ from datetime import datetime
 import json
 from fnmatch import fnmatch
 import paramiko
+import hashlib
 from line_ending_handler import convert_line_endings, cleanup_temp_file
+
+def calculate_md5(file_path):
+    """计算文件的MD5哈希值
+    
+    Args:
+        file_path: 文件路径
+        
+    Returns:
+        str: 文件的MD5哈希值
+    """
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
 
 def parse_targets(targets):
     """解析目标路径列表，区分本地和远程路径

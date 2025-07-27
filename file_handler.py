@@ -3,7 +3,7 @@ from datetime import datetime
 import os
 import time
 import json
-from sync_utils import sync_to_local, sync_to_remote, should_ignore_file, parse_targets, delete_from_local, delete_from_remote, delete_from_remote_dir, delete_from_local_dir
+from sync_utils import sync_to_local, sync_to_remote, should_ignore_file, parse_targets, delete_from_local, delete_from_remote, delete_from_remote_dir, delete_from_local_dir, calculate_md5
 
 class FileHandler(FileSystemEventHandler):
     def __init__(self, config: dict, config_name: str):
@@ -45,11 +45,14 @@ class FileHandler(FileSystemEventHandler):
             self.sync_times = {}
 
     def _save_sync_time(self, file_path):
-        """保存文件的同步时间"""
+        """保存文件的同步时间和MD5哈希值"""
         abs_path = os.path.abspath(file_path)
         timestamp = datetime.now().isoformat()
         
         try:
+            # 计算文件的MD5哈希值
+            md5_hash = calculate_md5(file_path)
+            
             all_sync_times = {}
             if os.path.exists(self.last_sync_file):
                 with open(self.last_sync_file, 'r', encoding='utf-8') as f:
@@ -61,7 +64,15 @@ class FileHandler(FileSystemEventHandler):
             
             if self.config_name not in all_sync_times:
                 all_sync_times[self.config_name] = {}
-            all_sync_times[self.config_name][abs_path] = timestamp
+            
+            # 保存时间戳和MD5哈希值
+            if abs_path not in all_sync_times[self.config_name]:
+                all_sync_times[self.config_name][abs_path] = {}
+            
+            all_sync_times[self.config_name][abs_path] = {
+                'timestamp': timestamp,
+                'md5': md5_hash
+            }
             
             os.makedirs(os.path.dirname(self.last_sync_file), exist_ok=True)
             with open(self.last_sync_file, 'w', encoding='utf-8') as f:
@@ -73,20 +84,48 @@ class FileHandler(FileSystemEventHandler):
 
     def _need_sync(self, file_path):
         """检查文件是否需要同步
-        如果文件的最后修改时间晚于上次同步时间，则需要同步。
+        只有当文件的最后修改时间晚于上次同步时间，并且MD5哈希值不同时，才需要同步。
         """
         abs_path = os.path.abspath(file_path)
-        last_sync_time_str = self.sync_times.get(abs_path)
+        sync_info = self.sync_times.get(abs_path)
         
-        if not last_sync_time_str:
+        if not sync_info:
             return True
         
         try:
+            # 处理旧格式（字符串）和新格式（字典）
+            if isinstance(sync_info, str):
+                # 旧格式：只有时间戳，没有MD5
+                last_sync_time_str = sync_info
+                last_md5 = None
+            else:
+                # 新格式：包含时间戳和MD5
+                last_sync_time_str = sync_info.get('timestamp')
+                last_md5 = sync_info.get('md5')
+            
+            # 如果没有MD5记录，使用旧的逻辑
+            if not last_md5:
+                last_sync_time = datetime.fromisoformat(last_sync_time_str)
+                last_modified_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+                return last_modified_time > last_sync_time
+            
+            # 检查修改时间
             last_sync_time = datetime.fromisoformat(last_sync_time_str)
             last_modified_time = datetime.fromtimestamp(os.path.getmtime(file_path))
-            return last_modified_time > last_sync_time
+            time_changed = last_modified_time > last_sync_time
+            
+            # 如果时间没有变化，不需要同步
+            if not time_changed:
+                return False
+            
+            # 计算当前文件的MD5哈希值
+            current_md5 = calculate_md5(file_path)
+            
+            # 只有当时间变化并且MD5哈希值不同时，才需要同步
+            return current_md5 != last_md5
+            
         except Exception as e:
-            print(f"比较时间失败: {e}")
+            print(f"比较时间或MD5失败: {e}, 文件: {file_path}")
             return True
 
     def preview_sync_files(self):
@@ -149,13 +188,32 @@ class FileHandler(FileSystemEventHandler):
 
         # 添加检查是否需要同步
         if not self._need_sync(src_path):
-            last_sync_time = datetime.fromisoformat(self.sync_times.get(src_path, ''))
-            last_modified_time = datetime.fromtimestamp(os.path.getmtime(src_path))
+            sync_info = self.sync_times.get(src_path, {})
             
-            log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 文件无需同步: {src_path}\n"
-            log_message += f"_sync_file: 上次同步时间: {last_sync_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            log_message += f"_sync_file: 文件修改时间: {last_modified_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            self._log(log_message)
+            try:
+                # 处理旧格式（字符串）和新格式（字典）
+                if isinstance(sync_info, str):
+                    last_sync_time_str = sync_info
+                    last_md5 = "未记录"
+                else:
+                    last_sync_time_str = sync_info.get('timestamp', '')
+                    last_md5 = sync_info.get('md5', '未记录')
+                
+                last_sync_time = datetime.fromisoformat(last_sync_time_str) if last_sync_time_str else datetime.min
+                last_modified_time = datetime.fromtimestamp(os.path.getmtime(src_path))
+                current_md5 = calculate_md5(src_path)
+                
+                log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 文件无需同步: {src_path}\n"
+                log_message += f"_sync_file: 上次同步时间: {last_sync_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                log_message += f"_sync_file: 文件修改时间: {last_modified_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                log_message += f"_sync_file: 时间是否变化: {'是' if last_modified_time > last_sync_time else '否'}\n"
+                log_message += f"_sync_file: 文件MD5: {current_md5}\n"
+                log_message += f"_sync_file: 上次MD5: {last_md5}\n"
+                log_message += f"_sync_file: MD5是否变化: {'是' if current_md5 != last_md5 else '否'}\n"
+                log_message += f"_sync_file: 同步条件: 时间变化 且 MD5变化\n"
+                self._log(log_message)
+            except Exception as e:
+                print(f"获取同步信息失败: {e}, 文件: {src_path}")
             return False
 
         relative_path = os.path.relpath(src_path, self.source_dir)
@@ -241,13 +299,33 @@ class FileHandler(FileSystemEventHandler):
         
         # 检查是否需要同步
         if not self._need_sync(file_path):
-            last_sync_time = datetime.fromisoformat(self.sync_times.get(file_path, ''))
-            last_modified_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+            sync_info = self.sync_times.get(file_path, {})
             
-            log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 检测到文件变更但无需同步: {file_path}\n"
-            log_message += f"上次同步时间: {last_sync_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            log_message += f"文件修改时间: {last_modified_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            self._log(log_message, write_to_console=False)
+            try:
+                # 处理旧格式（字符串）和新格式（字典）
+                if isinstance(sync_info, str):
+                    last_sync_time_str = sync_info
+                    last_md5 = "未记录"
+                else:
+                    last_sync_time_str = sync_info.get('timestamp', '')
+                    last_md5 = sync_info.get('md5', '未记录')
+                
+                last_sync_time = datetime.fromisoformat(last_sync_time_str) if last_sync_time_str else datetime.min
+                last_modified_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+                current_md5 = calculate_md5(file_path)
+                
+                log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 检测到文件变更但无需同步: {file_path}\n"
+                log_message += f"上次同步时间: {last_sync_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                log_message += f"文件修改时间: {last_modified_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                log_message += f"时间是否变化: {'是' if last_modified_time > last_sync_time else '否'}\n"
+                log_message += f"文件MD5: {current_md5}\n"
+                log_message += f"上次MD5: {last_md5}\n"
+                log_message += f"MD5是否变化: {'是' if current_md5 != last_md5 else '否'}\n"
+                log_message += f"同步条件: 时间变化 且 MD5变化\n"
+                self._log(log_message, write_to_console=False)
+            except Exception as e:
+                print(f"获取同步信息失败: {e}, 文件: {file_path}")
+                
             self.last_logged_file = file_path
             return
         
