@@ -4,6 +4,7 @@ import os
 import time
 import json
 from sync_utils import sync_to_local, sync_to_remote, should_ignore_file, parse_targets, delete_from_local, delete_from_remote, delete_from_remote_dir, delete_from_local_dir, calculate_md5
+from line_ending_handler import print_shell_script_commands
 
 class FileHandler(FileSystemEventHandler):
     def __init__(self, config: dict, config_name: str):
@@ -244,6 +245,10 @@ class FileHandler(FileSystemEventHandler):
 
         # 同步完成后保存同步时间
         self._save_sync_time(src_path)
+        
+        # 检查是否需要打印特殊命令
+        print_shell_script_commands(src_path, self.source_dir)
+        
         return True
 
     def sync_all_files(self, check_time=False):

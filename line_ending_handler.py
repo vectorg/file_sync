@@ -1,6 +1,22 @@
 import os
 import tempfile
 
+def is_linux_shell_script(file_path):
+    """判断文件是否是Linux中的shell脚本文件
+    
+    Args:
+        file_path: 文件路径
+        
+    Returns:
+        bool: 如果是shell脚本文件返回True，否则返回False
+    """
+    # 需要特殊处理的文件列表
+    special_files = ["post-receive"]
+    
+    # 检查是否是 .sh 文件或在特殊文件列表中
+    file_name = os.path.basename(file_path)
+    return file_path.endswith('.sh') or file_name in special_files
+
 def convert_line_endings(source_path, target_os='linux'):
     """转换文件的行尾符号为目标操作系统格式
     
@@ -13,8 +29,8 @@ def convert_line_endings(source_path, target_os='linux'):
             - 如果创建了临时文件，返回临时文件路径和True
             - 如果未创建临时文件，返回原文件路径和False
     """
-    # 只处理sh文件
-    if not source_path.endswith('.sh'):
+    # 只处理shell脚本文件
+    if not is_linux_shell_script(source_path):
         return source_path, False
         
     # 读取文件内容
@@ -50,4 +66,18 @@ def cleanup_temp_file(temp_path, is_temp=False):
         is_temp: 是否为临时文件，如果为True则删除文件
     """
     if is_temp and os.path.exists(temp_path):
-        os.remove(temp_path) 
+        os.remove(temp_path)
+
+def print_shell_script_commands(file_path, source_dir):
+    """打印shell脚本文件的特殊命令
+    
+    Args:
+        file_path: 文件路径
+        source_dir: 源目录
+    """
+    # 检查是否是shell脚本文件
+    if is_linux_shell_script(file_path):
+        # 使用相对路径，并转换为正斜杠分隔符
+        relative_path = os.path.relpath(file_path, source_dir).replace('\\', '/')
+        print(f"sed -i 's/\\r$//' {relative_path}")
+        print(f"chmod +x {relative_path}") 
