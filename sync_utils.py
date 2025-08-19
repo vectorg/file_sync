@@ -93,7 +93,14 @@ def sync_to_remote(source_path, remote_path, target):
                 remote_dir = os.path.dirname(remote_path)
                 mkdir_cmd = f"mkdir -p '{remote_dir}'"
                 # print(f"执行远程命令: {mkdir_cmd}")
-                ssh.exec_command(mkdir_cmd)
+                
+                # 同步执行目录创建命令并检查结果
+                stdin, stdout, stderr = ssh.exec_command(mkdir_cmd)
+                exit_code = stdout.channel.recv_exit_status()  # 等待命令执行完成
+                if exit_code != 0:
+                    error_msg = stderr.read().decode().strip()
+                    raise Exception(f"远程目录创建失败 (退出码: {exit_code}): {error_msg}")
+                
                 # print(f"上传文件: {file_path} -> {target['server']}:{remote_path}")
                 sftp.put(file_path, remote_path)
             finally:
@@ -271,4 +278,4 @@ def delete_from_remote_dir(remote_path, target):
             
     except (subprocess.CalledProcessError, paramiko.SSHException) as e:
         print(f"删除远程目录失败: {e}")
-        raise 
+        raise
